@@ -41,6 +41,7 @@ import org.ballerinalang.model.expressions.XMLTextLiteral;
 import org.ballerinalang.model.expressions.variablerefs.SimpleVarRefExpr;
 import org.ballerinalang.model.symbols.BLangSymbol;
 import org.ballerinalang.model.types.BArrayType;
+import org.ballerinalang.model.types.BFunctionType;
 import org.ballerinalang.model.types.BJSONConstrainedType;
 import org.ballerinalang.model.types.BType;
 import org.ballerinalang.model.types.BTypes;
@@ -118,7 +119,26 @@ public class SemanticAnalyzerUtils {
             return assignabilityResult;
         }
 
-        // SemanticAnalyzer 3913-3931
+        // Further check whether types are assignable recursively, specially array types
+        if (rhsType instanceof BFunctionType && lhsType instanceof BFunctionType) {
+            BFunctionType rhs = (BFunctionType) rhsType;
+            BFunctionType lhs = (BFunctionType) lhsType;
+            if (rhs.getParameterType().length == lhs.getParameterType().length &&
+                    rhs.getReturnParameterType().length == lhs.getReturnParameterType().length) {
+                for (int i = 0; i < rhs.getParameterType().length; i++) {
+                    if (!isAssignableTo(rhs.getParameterType()[i], lhs.getParameterType()[i])) {
+                        return assignabilityResult;
+                    }
+                }
+                for (int i = 0; i < rhs.getReturnParameterType().length; i++) {
+                    if (!isAssignableTo(rhs.getReturnParameterType()[i], lhs.getReturnParameterType()[i])) {
+                        return assignabilityResult;
+                    }
+                }
+                assignabilityResult.assignable = true;
+                return assignabilityResult;
+            }
+        }
 
         return assignabilityResult;
     }
@@ -463,6 +483,32 @@ public class SemanticAnalyzerUtils {
                 continue;
             }
             ((SimpleVarRefExpr) expr[i]).getVariableDef().setType(returnTypes[i]);
+        }
+    }
+
+    public static void matchAndUpdateFunctionPointsArgs(FunctionInvocationExpr funcIExpr,
+                                                  CallableUnitSymbolName symbolName, BFunctionType bFunctionType) {
+        if (symbolName.getNoOfParameters() != bFunctionType.getParameterType().length) {
+            BLangExceptionHelper.throwSemanticError(funcIExpr, SemanticErrors.INCORRECT_FUNCTION_ARGUMENTS,
+                    funcIExpr.getName());
+        }
+        Expression[] argExprs = funcIExpr.getArgExprs();
+        Expression[] updatedArgExprs = new Expression[argExprs.length];
+        for (int i = 0; i < argExprs.length; i++) {
+            Expression argExpr = argExprs[i];
+            updatedArgExprs[i] = argExpr;
+            BType lhsType = bFunctionType.getParameterType()[i];
+
+            AssignabilityResult result = performAssignabilityCheck(lhsType, argExpr);
+            if (result.expression != null) {
+                updatedArgExprs[i] = result.expression;
+            } else if (!result.assignable) {
+                BLangExceptionHelper.throwSemanticError(funcIExpr, SemanticErrors.INCORRECT_FUNCTION_ARGUMENTS,
+                        funcIExpr.getName());
+            }
+        }
+        for (int i = 0; i < updatedArgExprs.length; i++) {
+            funcIExpr.getArgExprs()[i] = updatedArgExprs[i];
         }
     }
 }
